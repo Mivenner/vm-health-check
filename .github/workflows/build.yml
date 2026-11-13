@@ -1,0 +1,78 @@
+name: Build VM Health Check
+
+on:
+  push:
+    branches: [ main ]
+    tags: [ 'v*' ]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Verifica sintassi
+        shell: pwsh
+        run: .\Tests\Test-Syntax.ps1
+
+      - name: Test funzionale
+        shell: pwsh
+        run: $t=[IO.File]::ReadAllText("VMHealth.Engine.psm1"); Import-Module (New-Module -Name VMHealth.Engine -ScriptBlock ([scriptblock]::Create($t))) -Force; $c = Invoke-HcCheck; $h = Export-HcReport -Check $c -OutFolder "$env:TEMP\hc"; if (-not (Test-Path $h)) { throw "report non creato" }; "Semaforo: $($c.Semaforo) - $($c.Risultati.Count) controlli"; $c.Risultati | Where-Object Stato -eq "NA" | ForEach-Object { "NA: $($_.Titolo): $($_.Messaggio)" }
+      - name: Test funzionale in Windows PowerShell 5.1
+        shell: powershell
+        run: |
+          Set-ExecutionPolicy -Scope Process Bypass -Force
+          .\VMHealth.CLI.ps1 -Out "$env:TEMP\hc51" -Cliente "CI"
+          if ($LASTEXITCODE -ge 3) { Get-Content "$env:TEMP\hc51\HealthCheck_errore.log" -ErrorAction SilentlyContinue; throw "Health check fallito in PS 5.1" }
+          if (-not (Get-ChildItem "$env:TEMP\hc51\*.html")) { throw "report HTML non creato" }
+          $global:LASTEXITCODE = 0
+      - name: Installa Inno Setup 6
+        shell: pwsh
+        run: choco install innosetup --no-progress -y
+      - name: Compila exe + installer
+        shell: powershell
+        run: |
+          Set-ExecutionPolicy -Scope Process Bypass -Force
+          $v = if ($env:GITHUB_REF -like 'refs/tags/v*') { $env:GITHUB_REF.Substring(11) } else { '1.0.' + $env:GITHUB_RUN_NUMBER }
+          .\Build.ps1 -Version $v
+          Copy-Item "dist\VMHealthCheck_Portable_$v.zip" dist\VMHealthCheck_Portable.zip -Force
+          Get-ChildItem dist\VMHealthCheck_Setup_*.exe | Select-Object -First 1 | Copy-Item -Destination dist\VMHealthCheck_Setup.exe -Force
+          .\Make-Portable.ps1 -Version $v
+          "VERSIONE=$v" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
+      - name: Carica artefatti
+        uses: actions/upload-artifact@v4
+        with:
+          name: VMHealthCheck
+          path: |
+            dist/VMHealthCheck.exe
+            dist/VMHealthCheck_Portable_*.zip
+            dist/VMHealthCheck_Portable.cmd
+            dist/VMHealthCheck_Setup_*.exe
+      - name: Tag "latest"
+        if: github.ref == 'refs/heads/main'
+        shell: pwsh
+        run: |
+          git config user.name "github-actions"; git config user.email "actions@github.com"
+          git tag -f latest; git push -f origin latest
+      - name: Release "latest"
+        if: github.ref == 'refs/heads/main'
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: latest
+          name: "Ultima build (${{ env.VERSIONE }})"
+          body: "Build automatica dall'ultimo commit su main. Link fissi: VMHealthCheck_Portable.zip e VMHealthCheck_Setup.exe"
+          prerelease: true
+          files: |
+            dist/VMHealthCheck_Portable.zip
+            dist/VMHealthCheck_Portable.cmd
+            dist/VMHealthCheck_Setup.exe
+      - name: Release per tag v*
+        if: startsWith(github.ref, 'refs/tags/v')
+        uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            dist/VMHealthCheck_Portable_*.zip
+            dist/VMHealthCheck_Setup_*.exe
