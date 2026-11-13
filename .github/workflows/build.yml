@@ -20,7 +20,8 @@ jobs:
 
       - name: Test funzionale
         shell: pwsh
-        run: $t=[IO.File]::ReadAllText("VMHealth.Engine.psm1"); Import-Module (New-Module -Name VMHealth.Engine -ScriptBlock ([scriptblock]::Create($t))) -Force; $c = Invoke-HcCheck; $h = Export-HcReport -Check $c -OutFolder "$env:TEMP\hc"; if (-not (Test-Path $h)) { throw "report non creato" }; "Semaforo: $($c.Semaforo) - $($c.Risultati.Count) controlli"; $c.Risultati | Where-Object Stato -eq "NA" | ForEach-Object { "NA: $($_.Titolo): $($_.Messaggio)" }
+        run: |
+          $t=[IO.File]::ReadAllText("VMHealth.Engine.psm1"); Import-Module (New-Module -Name VMHealth.Engine -ScriptBlock ([scriptblock]::Create($t))) -Force; $c = Invoke-HcCheck; $h = Export-HcReport -Check $c -OutFolder "$env:TEMP\hc"; if (-not (Test-Path $h)) { throw "report non creato" }; "Semaforo: $($c.Semaforo) - $($c.Risultati.Count) controlli"; $c.Risultati | Where-Object Stato -eq "NA" | ForEach-Object { "NA: $($_.Titolo): $($_.Messaggio)" }
       - name: Test funzionale in Windows PowerShell 5.1
         shell: powershell
         run: |
