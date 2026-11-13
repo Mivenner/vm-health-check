@@ -179,10 +179,10 @@ function Test-HcAggiornamenti {
     try {
         $s = New-Object -ComObject Microsoft.Update.Session; $searcher = $s.CreateUpdateSearcher(); $searcher.Online = $false
         $res = $searcher.Search('IsInstalled=0 and IsHidden=0')
-        $n = $res.Updates.Count
-        $sec = @(0..($n - 1) | ForEach-Object { $res.Updates.Item($_) } | Where-Object { $_.MsrcSeverity -in 'Critical','Important' }).Count
-        $r += New-HcResult 'wu.pending' 'Aggiornamenti' 'Aggiornamenti in attesa (cache locale)' $(if ($sec -gt 0) { 'WARN' } elseif ($n -gt 5) { 'INFO' } else { 'OK' }) "$n aggiornamenti non installati, di cui $sec di sicurezza critici/importanti" @(0..([math]::Min($n, 8) - 1) | Where-Object { $n -gt 0 } | ForEach-Object { $res.Updates.Item($_).Title })
-    } catch { $r += New-HcResult 'wu.pending' 'Aggiornamenti' 'Aggiornamenti in attesa' 'NA' 'Non rilevabile (Windows Update non raggiungibile o servizio fermo)' }
+        $n = [int]$res.Updates.Count; $sec = 0; $titles = @()
+        for ($k = 0; $k -lt $n; $k++) { $u = $res.Updates.Item([int]$k); if ([string]$u.MsrcSeverity -eq 'Critical' -or [string]$u.MsrcSeverity -eq 'Important') { $sec++ }; if ($titles.Count -lt 8) { $titles += [string]$u.Title } }
+        $r += New-HcResult 'wu.pending' 'Aggiornamenti' 'Aggiornamenti in attesa (cache locale)' $(if ($sec -gt 0) { 'WARN' } elseif ($n -gt 5) { 'INFO' } else { 'OK' }) "$n aggiornamenti non installati, di cui $sec di sicurezza critici/importanti" $titles
+    } catch { $r += New-HcResult 'wu.pending' 'Aggiornamenti' 'Aggiornamenti in attesa' 'NA' ('Non rilevabile: ' + $_.Exception.Message) }
     try { $svc = Get-Service wuauserv -ErrorAction Stop; if ($svc.StartType -eq 'Disabled') { $r += New-HcResult 'wu.svc' 'Aggiornamenti' 'Servizio Windows Update' 'CRIT' 'Il servizio Windows Update e'' disabilitato.' $null 'Riabilitare il servizio wuauserv (avvio manuale).' } } catch {}
     return $r
 }
@@ -222,14 +222,14 @@ function Test-HcRete {
     try {
         $ad = @(Get-NetAdapter -Physical -ErrorAction Stop | Where-Object Status -eq 'Up')
         $det = @()
-        foreach ($a in $ad) { $ip = (Get-NetIPAddress -InterfaceIndex $a.ifIndex -AddressFamily IPv4 -ErrorAction SilentlyContinue | Select-Object -First 1).IPAddress; $det += "{0} ({1}) {2} - {3}" -f $a.Name, $a.InterfaceDescription, $a.LinkSpeed, $ip }
+        foreach ($a in $ad) { $ip = ''; $ipo = Get-NetIPAddress -InterfaceIndex $a.ifIndex -AddressFamily IPv4 -ErrorAction SilentlyContinue | Select-Object -First 1; if ($ipo) { $ip = [string]$ipo.IPAddress }; $det += "{0} ({1}) {2} - {3}" -f $a.Name, $a.InterfaceDescription, $a.LinkSpeed, $ip }
         $r += New-HcResult 'net.adapters' 'Rete' 'Schede di rete attive' $(if ($ad.Count -eq 0) { 'CRIT' } else { 'INFO' }) "$($ad.Count) connesse" @($det)
-        $gw = (Get-NetRoute -DestinationPrefix '0.0.0.0/0' -ErrorAction SilentlyContinue | Sort-Object RouteMetric | Select-Object -First 1).NextHop
+        $gw = ''; $gwo = Get-NetRoute -DestinationPrefix '0.0.0.0/0' -ErrorAction SilentlyContinue | Sort-Object RouteMetric | Select-Object -First 1; if ($gwo) { $gw = [string]$gwo.NextHop }
         if ($gw) { $p = Test-Connection -ComputerName $gw -Count 2 -Quiet -ErrorAction SilentlyContinue; $r += New-HcResult 'net.gw' 'Rete' "Gateway $gw" $(if ($p) { 'OK' } else { 'CRIT' }) $(if ($p) { 'Raggiungibile' } else { 'Non risponde al ping' }) }
         $dnsOk = $false; try { $null = [System.Net.Dns]::GetHostAddresses('www.microsoft.com'); $dnsOk = $true } catch {}
         $inet = Test-Connection -ComputerName 1.1.1.1 -Count 2 -Quiet -ErrorAction SilentlyContinue
         $r += New-HcResult 'net.inet' 'Rete' 'Internet e DNS' $(if ($inet -and $dnsOk) { 'OK' } elseif ($inet) { 'WARN' } else { 'CRIT' }) ("Internet (1.1.1.1): {0} - risoluzione DNS: {1}" -f $(if ($inet) { 'ok' } else { 'NO' }), $(if ($dnsOk) { 'ok' } else { 'NO' })) $null $(if (-not $dnsOk -and $inet) { 'Internet c''e'' ma il DNS non risolve: controllare i server DNS della scheda/router.' } elseif (-not $inet) { 'Nessuna connessione Internet.' } else { '' })
-        $dnsSrv = (Get-DnsClientServerAddress -AddressFamily IPv4 -ErrorAction SilentlyContinue | Where-Object { $_.ServerAddresses } | Select-Object -First 1).ServerAddresses -join ', '
+        $dnsSrv = ''; $dso = Get-DnsClientServerAddress -AddressFamily IPv4 -ErrorAction SilentlyContinue | Where-Object { $_.ServerAddresses } | Select-Object -First 1; if ($dso) { $dnsSrv = @($dso.ServerAddresses) -join ', ' }
         $r += New-HcResult 'net.dns' 'Rete' 'Server DNS' 'INFO' $dnsSrv
         $prof = (Get-NetConnectionProfile -ErrorAction SilentlyContinue | Select-Object -First 1)
         if ($prof) { $r += New-HcResult 'net.profile' 'Rete' 'Profilo di rete' $(if ($prof.NetworkCategory -eq 'Public' -and $prof.InterfaceAlias -notmatch 'Wi-?Fi') { 'INFO' } else { 'INFO' }) ("{0}: {1}" -f $prof.Name, $prof.NetworkCategory) }
