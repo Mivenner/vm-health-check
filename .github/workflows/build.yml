@@ -65,7 +65,8 @@ jobs:
           tag_name: latest
           name: "Ultima build (${{ env.VERSIONE }})"
           body: "Build automatica dall'ultimo commit su main. Link fissi: VMHealthCheck_Portable.zip e VMHealthCheck_Setup.exe"
-          prerelease: true
+          prerelease: false
+          make_latest: true
           files: |
             dist/VMHealthCheck_Portable.zip
             dist/VMHealthCheck_Portable.cmd
